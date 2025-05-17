@@ -12,33 +12,37 @@ import seaborn as sns
 from train import ConvEncoder
 
 # --- CONFIG ---
-DATASET_PATH = './data/preprocess/preprocessed_data.pt'
-IDS_PATH = './data/preprocess/preprocessed_ids.pt'
-MODEL_PATH = './data/model/jepa_best_model.pth'
-CLINICAL_PATH = './data/raw/clinical_info.csv'
-TARGET_VARIABLE = 'bmi'
+DATASET_PATH = "./data/preprocess/preprocessed_data.pt"
+IDS_PATH = "./data/preprocess/preprocessed_ids.pt"
+MODEL_PATH = "./data/model/jepa_best_model.pth"
+CLINICAL_PATH = "./data/raw/clinical_info.csv"
+TARGET_VARIABLE = "bmi"
 BATCH_SIZE = 512
 EMBED_DIM = 128
-EMBED_CACHE = './data/postprocess/jepa_embeddings.pt'
-TARGET_CACHE = './data/postprocess/jepa_targets_bmi.pt'
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'mps')
+EMBED_CACHE = "./data/postprocess/jepa_embeddings.pt"
+TARGET_CACHE = "./data/postprocess/jepa_targets_bmi.pt"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps")
 
 BMI_BUCKETS = [(0, 18.5), (18.5, 25), (25, 30), (30, 35), (35, 40), (40, 100)]
-BMI_LABELS = ['Underweight', 'Normal', 'Overweight', 'Obese I', 'Obese II', 'Obese III']
+BMI_LABELS = ["Underweight", "Normal", "Overweight", "Obese I", "Obese II", "Obese III"]
 NUM_BUCKETS = len(BMI_BUCKETS)
 
 # --- Ensure output dir exists ---
-os.makedirs('./data/postprocess', exist_ok=True)
+os.makedirs("./data/postprocess", exist_ok=True)
+
 
 # --- Dataset ---
 class JEPAEmbeddingDataset(Dataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
+
     def __len__(self):
         return len(self.y)
+
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
+
 
 # --- MLP Classifier ---
 class MLPClassifierTorch(nn.Module):
@@ -49,20 +53,30 @@ class MLPClassifierTorch(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Linear(64, num_classes)
+            nn.Linear(64, num_classes),
         )
+
     def forward(self, x):
         return self.net(x)
+
 
 # --- Plotting ---
 def plot_confusion_matrix(conf, labels):
     plt.figure(figsize=(9, 7))
-    sns.heatmap(conf, annot=True, fmt=".2f", cmap='Blues', xticklabels=labels, yticklabels=labels)
+    sns.heatmap(
+        conf,
+        annot=True,
+        fmt=".2f",
+        cmap="Blues",
+        xticklabels=labels,
+        yticklabels=labels,
+    )
     plt.xlabel("Predicted BMI Category")
     plt.ylabel("True BMI Category")
     plt.title("Normalized Confusion Matrix (BMI Buckets)")
     plt.tight_layout()
     plt.show()
+
 
 # --- Main ---
 def main():
@@ -70,9 +84,9 @@ def main():
     raw_data = torch.load(DATASET_PATH)
     caseids = torch.load(IDS_PATH).numpy()
     clinical_df = pd.read_csv(CLINICAL_PATH)
-    clinical_df = clinical_df[['caseid', TARGET_VARIABLE]].dropna()
+    clinical_df = clinical_df[["caseid", TARGET_VARIABLE]].dropna()
 
-    caseid_to_target = dict(zip(clinical_df['caseid'], clinical_df[TARGET_VARIABLE]))
+    caseid_to_target = dict(zip(clinical_df["caseid"], clinical_df[TARGET_VARIABLE]))
     matched_targets = []
     matched_indices = []
 
@@ -102,7 +116,13 @@ def main():
         print("🧠 Extracting embeddings from JEPA model...")
         encoder = ConvEncoder(in_channels=2, embed_dim=EMBED_DIM)
         state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
-        encoder.load_state_dict({k.replace('encoder_context.', ''): v for k, v in state_dict.items() if 'encoder_context' in k})
+        encoder.load_state_dict(
+            {
+                k.replace("encoder_context.", ""): v
+                for k, v in state_dict.items()
+                if "encoder_context" in k
+            }
+        )
         encoder.to(DEVICE)
         encoder.eval()
 
@@ -111,7 +131,7 @@ def main():
 
         all_embeddings = []
         with torch.no_grad():
-            for batch, in loader:
+            for (batch,) in loader:
                 batch = batch.to(DEVICE)
                 emb = encoder(batch)
                 all_embeddings.append(emb.cpu())
@@ -121,13 +141,15 @@ def main():
         torch.save(torch.tensor(y_bucketed), TARGET_CACHE)
         print("✅ Saved embeddings and labels.")
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y_bucketed, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y_bucketed, test_size=0.2, random_state=42
+    )
 
     train_dataset = JEPAEmbeddingDataset(X_train, y_train)
     test_dataset = JEPAEmbeddingDataset(X_test, y_test)
 
     class_counts = np.bincount(y_train)
-    class_weights = 1. / class_counts
+    class_weights = 1.0 / class_counts
     sample_weights = class_weights[y_train]
     sampler = WeightedRandomSampler(sample_weights, len(sample_weights))
 
@@ -183,6 +205,7 @@ def main():
     print(f"    Top-2 Accuracy: {top2_acc:.4f}")
 
     plot_confusion_matrix(conf_norm, labels=BMI_LABELS)
+
 
 if __name__ == "__main__":
     main()

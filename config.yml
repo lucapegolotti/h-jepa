@@ -1,0 +1,54 @@
+# ----------------------------
+# TRAINING CONFIGURATION
+# ----------------------------
+training:
+  epochs: 1000
+  batch_size: 512
+  learning_rate: 0.001
+  early_stopping_patience: 20
+  temperature: 0.1
+  ema_beta: 0.99
+  window_size: 600
+  mask_size: 100
+
+# ----------------------------
+# MODEL CONFIGURATION
+# ----------------------------
+model:
+  embed_dim: 128
+  window_size: 600
+  mask_size: 100
+  in_channels: 2
+  conv1_out_channels: 32
+  conv1_kernel_size: 5
+  conv1_stride: 2
+  conv1_padding: 2
+  conv2_out_channels: 64 
+  conv2_kernel_size: 5
+  conv2_stride: 2
+  conv2_padding: 2
+  conv3_out_channels: 128 
+  conv3_kernel_size: 2
+  conv3_stride: 2
+  conv3_padding: 1
+  batch_norm_momentum: 0.05
+  adaptive_pool_output_size: 1
+
+# ----------------------------
+# PATHS
+# ----------------------------
+paths:
+  preprocessed_data: "./data/preprocess/preprocessed_data.pt"
+  model_dir: "./data/model/"
+
+# ----------------------------
+# PREPROCESSING
+# ----------------------------
+preprocessing:
+  target_variable: "sex"
+  signal_keys:
+    - "SNUADC/ECG_II"
+    - "SNUADC/PLETH"
+  sample_rate: 20
+  sample_duration_seconds: 30
+  step_size: 600  # Set automatically as window_size // 1

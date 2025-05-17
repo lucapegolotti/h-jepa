@@ -61,6 +61,8 @@ PACKAGES=(
     "torch"
     "scikit-learn"
     "seaborn"
+    "black
+    "pyyaml
 )
 
 for PACKAGE in "${PACKAGES[@]}"; do
