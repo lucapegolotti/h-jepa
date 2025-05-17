@@ -60,6 +60,7 @@ PACKAGES=(
     "matplotlib"
     "torch"
     "scikit-learn"
+    "seaborn"
 )
 
 for PACKAGE in "${PACKAGES[@]}"; do

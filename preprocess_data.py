@@ -6,7 +6,7 @@ import vitaldb
 from tqdm import tqdm
 
 # ---- Config ----
-VITAL_PATH = './vital_files'
+VITAL_PATH = './data/raw/vital_files'
 OUTPUT_FDR = './data'
 os.makedirs(OUTPUT_FDR, exist_ok=True)
 
@@ -17,7 +17,7 @@ SIGNAL_KEYS = ['SNUADC/ECG_II', 'SNUADC/PLETH']
 SRATE = 20                        # target sample rate (Hz)
 SAMPLE_DURATION_SECONDS = 30
 WINDOW_SIZE = SAMPLE_DURATION_SECONDS * SRATE
-STEP_SIZE = WINDOW_SIZE // 2      # overlap
+STEP_SIZE = WINDOW_SIZE // 1      # overlap
 
 def preprocess_vital_files():
     samples = []
