@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, random_split
 import os
 import random
@@ -22,6 +21,7 @@ DEVICE = (
     else torch.device("cpu")
 )
 
+
 # ---- Training ----
 def run_epoch(config, model, dataloader, optimizer=None):
     """
@@ -32,7 +32,7 @@ def run_epoch(config, model, dataloader, optimizer=None):
             "window_size", "mask_size", "temperature", and "ema_beta".
         model (torch.nn.Module): The model to train or evaluate.
         dataloader (torch.utils.data.DataLoader): DataLoader providing the input data.
-        optimizer (torch.optim.Optimizer, optional): Optimizer for training. If None, 
+        optimizer (torch.optim.Optimizer, optional): Optimizer for training. If None,
             the function runs in evaluation mode.
 
     Returns:

@@ -40,6 +40,9 @@ model:
 paths:
   preprocessed_data: "./data/preprocess/preprocessed_data.pt"
   model_dir: "./data/model/"
+  raw_data_dir: "./data/raw/vital_files"
+  clinical_info_file: "./data/raw/clinical_info.csv"
+
 
 # ----------------------------
 # PREPROCESSING
