@@ -62,7 +62,11 @@ PACKAGES=(
     "scikit-learn"
     "seaborn"
     "black
-    "pyyaml
+    "pyyaml"
+    "ipykernel"
+    "jupyter"
+    "jupyterlab"
+    "notebook"
 )
 
 for PACKAGE in "${PACKAGES[@]}"; do

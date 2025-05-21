@@ -8,12 +8,12 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.metrics import confusion_matrix, accuracy_score, top_k_accuracy_score
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 import seaborn as sns
-from train import ConvEncoder
 
 # --- CONFIG ---
-DATASET_PATH = "./data/preprocess/preprocessed_data.pt"
-IDS_PATH = "./data/preprocess/preprocessed_ids.pt"
+DATASET_PATH = "./data/preprocess/data.pt"
+IDS_PATH = "./data/preprocess/ids.pt"
 MODEL_PATH = "./data/model/jepa_best_model.pth"
 CLINICAL_PATH = "./data/raw/clinical_info.csv"
 TARGET_VARIABLE = "bmi"
@@ -23,15 +23,36 @@ EMBED_CACHE = "./data/postprocess/jepa_embeddings.pt"
 TARGET_CACHE = "./data/postprocess/jepa_targets_bmi.pt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps")
 
-BMI_BUCKETS = [(0, 18.5), (18.5, 25), (25, 30), (30, 35), (35, 40), (40, 100)]
-BMI_LABELS = ["Underweight", "Normal", "Overweight", "Obese I", "Obese II", "Obese III"]
+BMI_BUCKETS = [(0, 18.5), (18.5, 25), (25, 30), (30, 100)]
+BMI_LABELS = ["Underweight", "Normal", "Overweight", "Obese"]
 NUM_BUCKETS = len(BMI_BUCKETS)
 
-# --- Ensure output dir exists ---
 os.makedirs("./data/postprocess", exist_ok=True)
 
+# ---- Encoder ----
+class ConvEncoder(nn.Module):
+    def __init__(self, in_channels, embed_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv1d(in_channels, 32, 5, stride=2, padding=2),
+            nn.BatchNorm1d(32, momentum=0.05),
+            nn.ReLU(),
+            nn.Conv1d(32, 64, 5, stride=2, padding=2),
+            nn.BatchNorm1d(64, momentum=0.05),
+            nn.ReLU(),
+            nn.Conv1d(64, 128, 2, stride=2, padding=1),
+            nn.BatchNorm1d(128, momentum=0.05),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+            nn.Linear(128, embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
 
-# --- Dataset ---
+    def forward(self, x):
+        return self.net(x)
+
+
 class JEPAEmbeddingDataset(Dataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -44,7 +65,6 @@ class JEPAEmbeddingDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
-# --- MLP Classifier ---
 class MLPClassifierTorch(nn.Module):
     def __init__(self, input_dim, num_classes):
         super().__init__()
@@ -60,7 +80,6 @@ class MLPClassifierTorch(nn.Module):
         return self.net(x)
 
 
-# --- Plotting ---
 def plot_confusion_matrix(conf, labels):
     plt.figure(figsize=(9, 7))
     sns.heatmap(
@@ -78,7 +97,6 @@ def plot_confusion_matrix(conf, labels):
     plt.show()
 
 
-# --- Main ---
 def main():
     print("📦 Loading raw data...")
     raw_data = torch.load(DATASET_PATH)
@@ -109,9 +127,39 @@ def main():
 
     y_bucketed = np.array([bucketize_bmi(b) for b in raw_bmi], dtype=np.int64)
 
+    # Build DataFrame to link indices to caseids and targets
+    match_df = pd.DataFrame({
+        "idx": matched_indices,
+        "caseid": caseids[matched_indices],
+        "target": y_bucketed
+    })
+
+    # Show overall class distribution
+    print("📊 Overall class distribution:")
+    print(match_df["target"].value_counts(normalize=True).sort_index().rename(lambda x: BMI_LABELS[x]))
+
+    # Stratified split based on caseid-bucket pairing
+    caseid_bucket_df = match_df.drop_duplicates(subset="caseid")[["caseid", "target"]]
+    train_caseids, test_caseids = train_test_split(
+        caseid_bucket_df["caseid"],
+        test_size=0.2,
+        random_state=42,
+        stratify=caseid_bucket_df["target"]
+    )
+
+    train_df = match_df[match_df["caseid"].isin(train_caseids)]
+    test_df = match_df[match_df["caseid"].isin(test_caseids)]
+
+    # Show split distributions
+    print("\n📊 Train class distribution:")
+    print(train_df["target"].value_counts(normalize=True).sort_index().rename(lambda x: BMI_LABELS[x]))
+    print("\n📊 Test class distribution:")
+    print(test_df["target"].value_counts(normalize=True).sort_index().rename(lambda x: BMI_LABELS[x]))
+
+    # Load or compute embeddings
     if os.path.exists(EMBED_CACHE):
         print("💾 Loading cached embeddings...")
-        X = torch.load(EMBED_CACHE).numpy()
+        X_all = torch.load(EMBED_CACHE).numpy()
     else:
         print("🧠 Extracting embeddings from JEPA model...")
         encoder = ConvEncoder(in_channels=2, embed_dim=EMBED_DIM)
@@ -136,28 +184,40 @@ def main():
                 emb = encoder(batch)
                 all_embeddings.append(emb.cpu())
 
-        X = torch.cat(all_embeddings).numpy()
-        torch.save(torch.tensor(X), EMBED_CACHE)
+        X_all = torch.cat(all_embeddings).numpy()
+        torch.save(torch.tensor(X_all), EMBED_CACHE)
         torch.save(torch.tensor(y_bucketed), TARGET_CACHE)
         print("✅ Saved embeddings and labels.")
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y_bucketed, test_size=0.2, random_state=42
-    )
+    # Final split based on index
+    X_train = X_all[train_df["idx"].values]
+    y_train = train_df["target"].values
+    X_test = X_all[test_df["idx"].values]
+    y_test = test_df["target"].values
 
+    # Dataset
     train_dataset = JEPAEmbeddingDataset(X_train, y_train)
     test_dataset = JEPAEmbeddingDataset(X_test, y_test)
 
-    class_counts = np.bincount(y_train)
-    class_weights = 1.0 / class_counts
+    # Compute stable class weights
+    class_weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.arange(NUM_BUCKETS),
+        y=y_train
+    )
+    class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(DEVICE)
+
+    # Weighted sampling for training
     sample_weights = class_weights[y_train]
     sampler = WeightedRandomSampler(sample_weights, len(sample_weights))
 
+    # Loaders
     train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
+    # Model + Optimizer + Loss
     model = MLPClassifierTorch(input_dim=EMBED_DIM, num_classes=NUM_BUCKETS).to(DEVICE)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()# (weight=class_weights_tensor)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     print("🚀 Training...")
@@ -176,9 +236,7 @@ def main():
 
     print("🔍 Evaluating...")
     model.eval()
-    all_preds = []
-    all_probs = []
-    all_targets = []
+    all_preds, all_probs, all_targets = [], [], []
 
     with torch.no_grad():
         for xb, yb in test_loader:

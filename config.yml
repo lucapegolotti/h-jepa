@@ -4,12 +4,12 @@
 training:
   epochs: 1000
   batch_size: 512
-  learning_rate: 0.001
+  learning_rate: 0.0002
   early_stopping_patience: 20
   temperature: 0.1
   ema_beta: 0.99
   window_size: 600
-  mask_size: 100
+  mask_size: 400
 
 # ----------------------------
 # MODEL CONFIGURATION
@@ -38,7 +38,8 @@ model:
 # PATHS
 # ----------------------------
 paths:
-  preprocessed_data: "./data/preprocess/preprocessed_data.pt"
+  preprocessed_data: "./data/preprocess/data.pt"
+  preprocessed_ids: "./data/preprocess/ids.pt"
   model_dir: "./data/model/"
   raw_data_dir: "./data/raw/vital_files"
   clinical_info_file: "./data/raw/clinical_info.csv"
@@ -55,3 +56,9 @@ preprocessing:
   sample_rate: 20
   sample_duration_seconds: 30
   step_size: 600  # Set automatically as window_size // 1
+
+# ----------------------------
+# EVAULUATION
+# ----------------------------
+evaluation:
+  model_name: "jepa_best_model.pth"

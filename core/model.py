@@ -123,71 +123,79 @@ class ConvEncoder(nn.Module):
 # ---- JEPA Model ----
 class JEPA(nn.Module):
     """
-    Joint Embedding Predictive Architecture (JEPA) model.
-
-    This class implements a JEPA model, which consists of two encoders (context and target),
-    a predictor, and a target projector. The model is designed to predict a normalized
-    embedding of a masked target region from the context region of the input.
-
-    Attributes:
-        config (dict): Configuration dictionary containing model and training parameters.
-        encoder_context (nn.Module): Encoder for the context region of the input.
-        encoder_target (nn.Module): Encoder for the target region of the input, initialized
-            as a deep copy of `encoder_context` and updated using an exponential moving average.
-        predictor (nn.Sequential): A feedforward network that predicts the target embedding
-            from the context embedding.
-        target_projector (nn.Sequential): A feedforward network that projects the target
-            embedding to the same space as the predicted embedding.
-
-    Methods:
-        forward(x, mask_start):
-            Computes the predicted and target embeddings for the input tensor `x`.
-
-        update_target_encoder(beta):
-            Updates the target encoder parameters using an exponential moving average
-            with the given momentum `beta`.
+    JEPA with multi-step target prediction and explicit position-aware conditioning (z).
     """
 
     def __init__(self, config):
         super().__init__()
 
         self.config = config
+        embed_dim = config["model"]["embed_dim"]
+        mask_size = config["training"]["mask_size"]
+        input_length = config["training"]["window_size"]
 
         self.encoder_context = ConvEncoder(config)
         self.encoder_target = copy.deepcopy(self.encoder_context)
         for param in self.encoder_target.parameters():
             param.requires_grad = False
 
+        # Projector and predictor operate per position
         self.predictor = nn.Sequential(
-            nn.Linear(config["model"]["embed_dim"], config["model"]["embed_dim"]),
+            nn.Linear(embed_dim * 2, embed_dim),
             nn.ReLU(),
-            nn.Linear(config["model"]["embed_dim"], config["model"]["embed_dim"]),
+            nn.Linear(embed_dim, embed_dim),
         )
 
         self.target_projector = nn.Sequential(
-            nn.Linear(config["model"]["embed_dim"], config["model"]["embed_dim"]),
+            nn.Linear(embed_dim, embed_dim),
             nn.ReLU(),
-            nn.Linear(config["model"]["embed_dim"], config["model"]["embed_dim"]),
+            nn.Linear(embed_dim, embed_dim),
         )
 
+        # Conditioning tokens
+        self.mask_token = nn.Parameter(torch.randn(embed_dim))
+        self.positional_embeddings = nn.Parameter(torch.randn(input_length, embed_dim))
+
     def forward(self, x, mask_start):
+
+        B = x.size(0)
+        mask_size = self.config["training"]["mask_size"]
+        embed_dim = self.config["model"]["embed_dim"]
+
+        # Mask target segment
         mask = torch.ones_like(x)
-        mask[:, :, mask_start : mask_start + self.config["training"]["mask_size"]] = 0
-
+        mask[:, :, mask_start:mask_start + mask_size] = 0
         context_input = x * mask
-        target_input = x[
-            :, :, mask_start : mask_start + self.config["training"]["mask_size"]
-        ]
+        target_input = x[:, :, mask_start:mask_start + mask_size]  # shape: (B, C, L_mask)
 
-        z_context = self.encoder_context(context_input)
+        # Encode context
+        z_context = self.encoder_context(context_input)  # shape: (B, D)
+
+        # Encode and normalize targets
         with torch.no_grad():
-            z_target = self.encoder_target(target_input)
+            z_target = self.encoder_target(target_input)  # shape: (B, D)
             z_target = self.target_projector(z_target)
+            z_target = F.normalize(z_target, dim=-1, eps=1e-6)
 
-        z_pred = F.normalize(self.predictor(z_context), dim=-1, eps=1e-6)
-        z_target = F.normalize(z_target, dim=-1, eps=1e-6)
+        # Position-aware conditioning: select correct positional embeddings
+        pos_emb = self.positional_embeddings[mask_start:mask_start + mask_size]  # shape: (L_mask, D)
+        pos_emb = pos_emb.unsqueeze(0).expand(B, -1, -1)  # shape: (B, L_mask, D)
 
-        return z_pred, z_target
+        mask_token = self.mask_token.unsqueeze(0).unsqueeze(1).expand(B, mask_size, -1)  # shape: (B, L_mask, D)
+
+        z_cond = mask_token + pos_emb  # shape: (B, L_mask, D)
+
+        # Expand context to match shape
+        z_context_expanded = z_context.unsqueeze(1).expand(B, mask_size, embed_dim)  # (B, L_mask, D)
+
+        # Concatenate context and z_cond per position
+        z_combined = torch.cat([z_context_expanded, z_cond], dim=-1)  # (B, L_mask, 2D)
+
+        # Flatten for predictor
+        z_pred = self.predictor(z_combined)  # shape: (B, L_mask, D)
+        z_pred = F.normalize(z_pred, dim=-1, eps=1e-6)
+
+        return z_pred, z_target.unsqueeze(1).expand(-1, mask_size, -1)  # match shape for loss
 
     def update_target_encoder(self, beta):
         for param_q, param_k in zip(

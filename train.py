@@ -164,9 +164,9 @@ def train(config):
                 print(f"⛔ Early stopping triggered after {epoch} epochs.")
                 break
 
-        if epoch % 10 == 0:
+        if epoch % 1 == 0:
             model_path = (
-                os.path.join(config["paths"]["model_dir"], f"jepa_epoch_{epoch}.pth"),
+                os.path.join(config["paths"]["model_dir"], f"jepa_epoch_{epoch}.pth")
             )
             torch.save(model.state_dict(), model_path)
 

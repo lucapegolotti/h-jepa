@@ -4,43 +4,41 @@ import torch
 from sklearn.preprocessing import StandardScaler
 import vitaldb
 from tqdm import tqdm
+import yaml
 
-# ---- Config ----
-VITAL_PATH = "./data/raw/vital_files"
-OUTPUT_FDR = "./data"
-os.makedirs(OUTPUT_FDR, exist_ok=True)
+# ---- Load Config ----
+CONFIG_PATH = "config.yml"
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
 
-OUTPUT_PATH_DATA = os.path.join(OUTPUT_FDR, "preprocessed_data.pt")
-OUTPUT_PATH_IDS = os.path.join(OUTPUT_FDR, "preprocessed_ids.pt")
-
-SIGNAL_KEYS = ["SNUADC/ECG_II", "SNUADC/PLETH"]
-SRATE = 20  # target sample rate (Hz)
-SAMPLE_DURATION_SECONDS = 30
-WINDOW_SIZE = SAMPLE_DURATION_SECONDS * SRATE
-STEP_SIZE = WINDOW_SIZE // 1  # overlap
-
+# Ensure output directories exist
+os.makedirs(os.path.dirname(config["paths"]["preprocessed_data"]), exist_ok=True)
+os.makedirs(os.path.dirname(config["paths"]["preprocessed_ids"]), exist_ok=True)
 
 def preprocess_vital_files():
     samples = []
     ids = []
 
     files = [
-        os.path.join(VITAL_PATH, f)
-        for f in os.listdir(VITAL_PATH)
+        os.path.join(config["paths"]["raw_data_dir"], f)
+        for f in os.listdir(config["paths"]["raw_data_dir"])
         if f.endswith(".vital")
     ]
     for file in tqdm(files):
         try:
-            vf = vitaldb.VitalFile(file, SIGNAL_KEYS)
+            vf = vitaldb.VitalFile(file, config["preprocessing"]["signal_keys"])
 
             signals = []
-            for sig in SIGNAL_KEYS:
+            for sig in config["preprocessing"]["signal_keys"]:
                 srate = vf.trks[sig].srate
-                factor = max(1, round(srate / SRATE))
+                factor = max(1, round(srate / config["preprocessing"]["sample_rate"]))
                 signal = vf.to_numpy(sig, 0)[::factor]
                 signals.append(signal)
 
-            if any(len(s) < WINDOW_SIZE for s in signals):
+            window_size = config["preprocessing"]["sample_duration_seconds"] * config["preprocessing"]["sample_rate"]
+            step_size = config["preprocessing"].get("step_size", window_size // 1)
+
+            if any(len(s) < window_size for s in signals):
                 continue
 
             signals = [
@@ -49,9 +47,9 @@ def preprocess_vital_files():
             ]
             min_len = min(map(len, signals))
 
-            for i in range(0, min_len - WINDOW_SIZE, STEP_SIZE):
+            for i in range(0, min_len - window_size, step_size):
                 segment = np.stack(
-                    [s[i : i + WINDOW_SIZE] for s in signals], axis=0
+                    [s[i : i + window_size] for s in signals], axis=0
                 )  # (C, T)
                 if not np.isnan(segment).any():
                     samples.append(segment)
@@ -64,11 +62,10 @@ def preprocess_vital_files():
     data = torch.tensor(np.stack(samples), dtype=torch.float32)
     ids = torch.tensor(ids, dtype=torch.int32)
 
-    torch.save(data, OUTPUT_PATH_DATA)
-    torch.save(ids, OUTPUT_PATH_IDS)
-    print(f"📁 Saved data to {OUTPUT_PATH_DATA}")
-    print(f"📁 Saved caseids to {OUTPUT_PATH_IDS}")
-
+    torch.save(data, config["paths"]["preprocessed_data"])
+    torch.save(ids, config["paths"]["preprocessed_ids"])
+    print(f'📁 Saved data to {config["paths"]["preprocessed_data"]}')
+    print(f'📁 Saved caseids to {config["paths"]["preprocessed_ids"]}')
 
 if __name__ == "__main__":
     preprocess_vital_files()
